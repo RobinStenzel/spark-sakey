@@ -14,10 +14,12 @@ import org.apache.spark.rdd.RDD
 import org.apache.jena.graph._
 import org.apache.spark.graphx.EdgeTriplet
 
-import scalax.collection.Graph // or scalax.collection.mutable.Graph
+//import scalax.collection.Graph 
+import scalax.collection.mutable.Graph
 import scalax.collection.GraphPredef._, scalax.collection.GraphEdge._, scalax.collection._
 import scala.collection.Set
 import shapeless.LowPriority.For
+import scala.collection.immutable.HashSet
 
 
 object Sakey extends App{
@@ -71,14 +73,11 @@ object Sakey extends App{
   
   //Sansa read in triples
   val input = "src/main/resources/rdf.nt"
-  //val input = "src/main/resources/graph.nt"
   val lang = Lang.RDFXML
   val triples = spark.rdf(lang)(input)
   
   triples.cache()
 
-  
-   
   val finalMap = getFinalMap(triples)._1
   
   //flatten Set of Sets to one single Set
@@ -124,6 +123,7 @@ object Sakey extends App{
   //create scalax graph out of edge and vertex set (better suited for removing and adding edges)
   val graphCC = joinedCC.map(f => Graph.from(f._2._2, f._2._1))
   
+  //TEST MIN FILL
   val testSetEdges = mutable.HashSet.empty[UnDiEdge[VertexId]]
   val testSetNodes = mutable.HashSet.empty[VertexId]
   val newId = 1L
@@ -132,36 +132,116 @@ object Sakey extends App{
   val newId4 = 4L
   val newId5 = 5L
   val newId6 = 6L
-  testSetNodes.+=(newId)
+  val newId7 = 7L
+  /*testSetNodes.+=(newId)
   testSetNodes.+=(newId2)
   testSetNodes.+=(newId3)
   testSetNodes.+=(newId4)
   testSetNodes.+=(newId5)
-  testSetNodes.+=(newId6)
+  testSetNodes.+=(newId6)*/
   val newEdge = UnDiEdge(newId, newId2)
-  val newEdge2 = UnDiEdge(newId, newId3)
-  val newEdge3 = UnDiEdge(newId, newId5)
-  val newEdge4 = UnDiEdge(newId2, newId4)
-  val newEdge5 = UnDiEdge(newId2, newId5)
-  val newEdge6 = UnDiEdge(newId3, newId4)
-  val newEdge7 = UnDiEdge(newId4, newId6)
+  val newEdge2 = UnDiEdge(newId2, newId3)
+  val newEdge3 = UnDiEdge(newId, newId3)
+
+  //val newEdge4 = UnDiEdge(newId3, newId)
+  //val newEdge5 = UnDiEdge(newId5, newId)
+  //val newEdge6 = UnDiEdge(newId6, newId)
+  //val newEdge7 = UnDiEdge(newId4, newId)
+  
 
   testSetEdges.+= (newEdge)
   testSetEdges.+= (newEdge2)
   testSetEdges.+= (newEdge3)
-  testSetEdges.+= (newEdge4)
-  testSetEdges.+= (newEdge5)
-  testSetEdges.+= (newEdge6)
-  testSetEdges.+= (newEdge7)
+  //testSetEdges.+= (newEdge4)
+  //testSetEdges.+= (newEdge5)
+  //testSetEdges.+= (newEdge6)
+  //testSetEdges.+= (newEdge7)
+  //testSetEdges.+= (newEdge8)
+  
+  
   val g2 = Graph.from(testSetNodes, testSetEdges)
-  val nodes = g2.nodes
+  val test = g2.edges
+  
+  
+  //returns min-fill: number of edges needed to be filled to fully connect the node's parents
   def getNodeFill (node: g2.NodeT) : Int = {
-    node.neighbors.zip(node.neighbors).filter(f => f._1 < f._2 && !g2.edges.contains(UnDiEdge(f._1,f._2))).size
+    node.neighbors
+      .flatMap(x => node.neighbors.map(y => (x, y)))
+      .filter(f => f._1 < f._2 && !g2.edges.contains(UnDiEdge(f._1,f._2))).size
   }
-  nodes.foreach({node => node.neighbors.zip(node.neighbors).filter(f => f._1 < f._2 && !g2.edges.contains(UnDiEdge(f._1,f._2))).size
-    
-  })
+
+  //ordering of Nodes based on min-fill
+  object NodeOrderingFill extends Ordering[g2.NodeT]{
+    def compare(x: g2.NodeT, y: g2.NodeT): Int = getNodeFill(x) compare getNodeFill(y)
+  }
+  
+  //creates the min-fill induced graph (chordal graph)
+  def minFillElimination (): Graph[VertexId,UnDiEdge] = {
+     val sizeGraph = g2.nodes.size
+     val newGraph = Graph.empty[VertexId,UnDiEdge]
+     newGraph ++= g2
+     var x = 0
+     for ( x  <- 1 to sizeGraph){ 
+       val minFillNode = g2.nodes.min(NodeOrderingFill)
+       println(minFillNode)
+       val newEdges =  minFillNode.neighbors
+                       .flatMap(x => minFillNode.neighbors.map(y => UnDiEdge(x.value, y.value)))
+                       .filter(f => !(f._1 == f._2) && !g2.edges.contains(UnDiEdge(f._1,f._2)))
+       println(newEdges)
+       g2 ++= newEdges
+       newGraph ++= newEdges
+       g2 -=  minFillNode
+       
+     }
+     return newGraph
+  }  
+  
+  def getNodeCardinality(node: g3.NodeT): Int = {
+    node.neighbors
+      .filter(f => g3.contains(f)).size
+  }
+  
+  object NodeOrderingCardinality extends Ordering[g3.NodeT]{
+    def compare(x: g3.NodeT, y: g3.NodeT): Int = getNodeCardinality(x) compare getNodeCardinality(y)
+  }
+  
+  def maxCardinalityList(): mutable.HashSet[mutable.HashSet[VertexId]] ={
+    val sizeGraph = g3.nodes.size
+    val listRemovedNodes = mutable.HashSet.empty[VertexId]
+    val setOfCliques = mutable.HashSet.empty[mutable.HashSet[VertexId]]
+    var x = 0
+    for ( x  <- 1 to sizeGraph){ 
+      val maxCardinalityNode = g3.nodes.max(new Ordering[g3.NodeT] {
+        def compare(x: g3.NodeT, y: g3.NodeT): Int = x.neighbors
+          .filter(f => listRemovedNodes.contains(f.value) && !listRemovedNodes.contains(x.value)).size compare y.neighbors
+          .filter(f => listRemovedNodes.contains(f.value) && !listRemovedNodes.contains(y.value)).size
+      })
+      println(s"Hello, $maxCardinalityNode")
+      val neighbors = maxCardinalityNode.neighbors
+      println(s"Neighbors, $neighbors")
+      println(maxCardinalityNode.neighbors
+      .filter(f => listRemovedNodes.contains(f)).size)
+      
+      val clique = mutable.HashSet.empty[VertexId]
+      clique.+=(maxCardinalityNode.value)
+      clique ++= maxCardinalityNode.neighbors.map(_.value).filter(f => listRemovedNodes.contains(f))
+      println(s"Cliques, $setOfCliques")
+      
+      setOfCliques += clique  
+      
+      listRemovedNodes += maxCardinalityNode.value
+      println(listRemovedNodes)
+        
+    }
+    setOfCliques.filter(f => setOfCliques.forall(p => !f.subsetOf(p) || p == f))
+  }
   println(g2)
+  val g3 = minFillElimination()
+  println(g3)
+  val set1 = maxCardinalityList()
+  println(set1)
+  
+      
   
   
 
