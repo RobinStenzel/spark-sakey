@@ -80,8 +80,10 @@ object Sakey extends App{
 
   val finalMap = getFinalMap(triples)._1
   
+  
   //flatten Set of Sets to one single Set
   val flatMap = finalMap.flatMapValues(identity).reduceByKey((x,y) => x.++(y))
+ 
   
   //Create all combinations of (property, set of subjects, property2, set2 of subjects)
   //remove every combination with intersections set lower than n
@@ -93,15 +95,16 @@ object Sakey extends App{
   val tripleRDD = edges.map(f => Triple.create(f._1, f._2, f._3))  
   val graph = tripleRDD.asGraph()
 
+
   //collect all properties that don't appear in any edge and put them in the list of non keys
   val nNonKeys= finalMap.keys.distinct().subtract(graph.vertices.values).collect()
-  nNonKeys.foreach(println)
+
+
   
-  
+
   
   //calculate CCs with GraphX
   val connectedComponents = graph.connectedComponents()
-  
   val mappedCC = connectedComponents.triplets.map(_.toTuple).map{ case ((v1,v2), (v3,v4), n1) => (v2, UnDiEdge(v1,v3))}
   
   //aggregate edges of the same connected component
@@ -120,130 +123,107 @@ object Sakey extends App{
   //join Edges and vertices with the same CC
   val joinedCC = mappedCC.aggregateByKey(edgeSet)(edgeSeqOp, edgeCombOp).join(vert)
   
+  
   //create scalax graph out of edge and vertex set (better suited for removing and adding edges)
-  val graphCC = joinedCC.map(f => Graph.from(f._2._2, f._2._1))
-  
-  //TEST MIN FILL
-  val testSetEdges = mutable.HashSet.empty[UnDiEdge[VertexId]]
-  val testSetNodes = mutable.HashSet.empty[VertexId]
-  val newId = 1L
-  val newId2 = 2L
-  val newId3 = 3L
-  val newId4 = 4L
-  val newId5 = 5L
-  val newId6 = 6L
-  val newId7 = 7L
-  /*testSetNodes.+=(newId)
-  testSetNodes.+=(newId2)
-  testSetNodes.+=(newId3)
-  testSetNodes.+=(newId4)
-  testSetNodes.+=(newId5)
-  testSetNodes.+=(newId6)*/
-  val newEdge = UnDiEdge(newId, newId2)
-  val newEdge2 = UnDiEdge(newId2, newId3)
-  val newEdge3 = UnDiEdge(newId, newId3)
-
-  //val newEdge4 = UnDiEdge(newId3, newId)
-  //val newEdge5 = UnDiEdge(newId5, newId)
-  //val newEdge6 = UnDiEdge(newId6, newId)
-  //val newEdge7 = UnDiEdge(newId4, newId)
-  
-
-  testSetEdges.+= (newEdge)
-  testSetEdges.+= (newEdge2)
-  testSetEdges.+= (newEdge3)
-  //testSetEdges.+= (newEdge4)
-  //testSetEdges.+= (newEdge5)
-  //testSetEdges.+= (newEdge6)
-  //testSetEdges.+= (newEdge7)
-  //testSetEdges.+= (newEdge8)
-  
-  
-  val g2 = Graph.from(testSetNodes, testSetEdges)
-  val test = g2.edges
-  
-  
-  //returns min-fill: number of edges needed to be filled to fully connect the node's parents
-  def getNodeFill (node: g2.NodeT) : Int = {
-    node.neighbors
-      .flatMap(x => node.neighbors.map(y => (x, y)))
-      .filter(f => f._1 < f._2 && !g2.edges.contains(UnDiEdge(f._1,f._2))).size
-  }
-
-  //ordering of Nodes based on min-fill
-  object NodeOrderingFill extends Ordering[g2.NodeT]{
-    def compare(x: g2.NodeT, y: g2.NodeT): Int = getNodeFill(x) compare getNodeFill(y)
-  }
-  
-  //creates the min-fill induced graph (chordal graph)
-  def minFillElimination (): Graph[VertexId,UnDiEdge] = {
-     val sizeGraph = g2.nodes.size
-     val newGraph = Graph.empty[VertexId,UnDiEdge]
-     newGraph ++= g2
-     var x = 0
-     for ( x  <- 1 to sizeGraph){ 
-       val minFillNode = g2.nodes.min(NodeOrderingFill)
-       println(minFillNode)
-       val newEdges =  minFillNode.neighbors
-                       .flatMap(x => minFillNode.neighbors.map(y => UnDiEdge(x.value, y.value)))
-                       .filter(f => !(f._1 == f._2) && !g2.edges.contains(UnDiEdge(f._1,f._2)))
-       println(newEdges)
-       g2 ++= newEdges
-       newGraph ++= newEdges
-       g2 -=  minFillNode
-       
-     }
-     return newGraph
-  }  
-  
-  def getNodeCardinality(node: g3.NodeT): Int = {
-    node.neighbors
-      .filter(f => g3.contains(f)).size
-  }
-  
-  object NodeOrderingCardinality extends Ordering[g3.NodeT]{
-    def compare(x: g3.NodeT, y: g3.NodeT): Int = getNodeCardinality(x) compare getNodeCardinality(y)
-  }
-  
-  def maxCardinalityList(): mutable.HashSet[mutable.HashSet[VertexId]] ={
-    val sizeGraph = g3.nodes.size
-    val listRemovedNodes = mutable.HashSet.empty[VertexId]
-    val setOfCliques = mutable.HashSet.empty[mutable.HashSet[VertexId]]
-    var x = 0
-    for ( x  <- 1 to sizeGraph){ 
-      val maxCardinalityNode = g3.nodes.max(new Ordering[g3.NodeT] {
-        def compare(x: g3.NodeT, y: g3.NodeT): Int = x.neighbors
-          .filter(f => listRemovedNodes.contains(f.value) && !listRemovedNodes.contains(x.value)).size compare y.neighbors
-          .filter(f => listRemovedNodes.contains(f.value) && !listRemovedNodes.contains(y.value)).size
+  val graphCC = joinedCC.map(f 
+      =>{
+        val nodes = f._2._2
+        val edges = f._2._1
+        getMaxCliques(nodes, edges)
       })
-      println(s"Hello, $maxCardinalityNode")
-      val neighbors = maxCardinalityNode.neighbors
-      println(s"Neighbors, $neighbors")
-      println(maxCardinalityNode.neighbors
-      .filter(f => listRemovedNodes.contains(f)).size)
       
-      val clique = mutable.HashSet.empty[VertexId]
-      clique.+=(maxCardinalityNode.value)
-      clique ++= maxCardinalityNode.neighbors.map(_.value).filter(f => listRemovedNodes.contains(f))
-      println(s"Cliques, $setOfCliques")
-      
-      setOfCliques += clique  
-      
-      listRemovedNodes += maxCardinalityNode.value
-      println(listRemovedNodes)
-        
+  graphCC.collect().foreach(println)
+  
+  //uses minFill to create a chordal graph and maxCardinanilityOrdering to extract cliques
+  //returns one set of Nodes that form a clique per connected component 
+  def getMaxCliques (nodes: mutable.HashSet[VertexId], edges: mutable.HashSet[GraphEdge.UnDiEdge[VertexId]]) :  mutable.HashSet[mutable.HashSet[VertexId]] = {
+    val g2 = Graph.from(nodes, edges)
+    
+    
+    
+    //returns min-fill: number of edges needed to be filled to fully connect the node's parents
+    def getNodeFill (node: g2.NodeT) : Int = {
+      node.neighbors
+        .flatMap(x => node.neighbors.map(y => (x, y)))
+        .filter(f => f._1 < f._2 && !g2.edges.contains(UnDiEdge(f._1,f._2))).size
     }
-    setOfCliques.filter(f => setOfCliques.forall(p => !f.subsetOf(p) || p == f))
-  }
-  println(g2)
-  val g3 = minFillElimination()
-  println(g3)
-  val set1 = maxCardinalityList()
-  println(set1)
   
-      
-  
-  
+    //ordering of Nodes based on min-fill
+    object NodeOrderingFill extends Ordering[g2.NodeT]{
+      def compare(x: g2.NodeT, y: g2.NodeT): Int = getNodeFill(x) compare getNodeFill(y)
+    }
+    
+    //creates the min-fill induced graph (chordal graph)
+    def minFillElimination (): Graph[VertexId,UnDiEdge] = {
+       val sizeGraph = g2.nodes.size
+       val newGraph = Graph.empty[VertexId,UnDiEdge]
+       newGraph ++= g2
+       var x = 0
+       for ( x  <- 1 to sizeGraph){ 
+         val minFillNode = g2.nodes.min(NodeOrderingFill)
+         val newEdges =  minFillNode.neighbors
+                         .flatMap(x => minFillNode.neighbors.map(y => UnDiEdge(x.value, y.value)))
+                         .filter(f => !(f._1 == f._2) && !g2.edges.contains(UnDiEdge(f._1,f._2)))
+         g2 ++= newEdges
+         newGraph ++= newEdges
+         g2 -=  minFillNode
+         
+       }
+       return newGraph
+    } 
+    
+    //create chordal graph using min-fill
+    val g3 = minFillElimination()
+    
+    //counts the number of already ordered(removed) nodes it is connected to
+    def getNodeCardinality(node: g3.NodeT): Int = {
+      node.neighbors
+        .filter(f => g3.contains(f)).size
+    }
+    
+    //ordering based on maxCardinality
+    object NodeOrderingCardinality extends Ordering[g3.NodeT]{
+      def compare(x: g3.NodeT, y: g3.NodeT): Int = getNodeCardinality(x) compare getNodeCardinality(y)
+    }
+    
+    //returns set of MaxCliques
+    def maxCardinalityList(): mutable.HashSet[mutable.HashSet[VertexId]] ={
+      val sizeGraph = g3.nodes.size
+      val listRemovedNodes = mutable.HashSet.empty[VertexId]
+      val setOfCliques = mutable.HashSet.empty[mutable.HashSet[VertexId]]
+      var x = 0
+      for ( x  <- 1 to sizeGraph){ 
+        val maxCardinalityNode = g3.nodes.max(new Ordering[g3.NodeT] {
+          def compare(x: g3.NodeT, y: g3.NodeT): Int = x.neighbors
+            .filter(f => listRemovedNodes.contains(f.value) && !listRemovedNodes.contains(x.value)).size compare y.neighbors
+            .filter(f => listRemovedNodes.contains(f.value) && !listRemovedNodes.contains(y.value)).size
+        })
+
+        val neighbors = maxCardinalityNode.neighbors
+
+        
+        val clique = mutable.HashSet.empty[VertexId]
+        clique.+=(maxCardinalityNode.value)
+        clique ++= maxCardinalityNode.neighbors.map(_.value).filter(f => listRemovedNodes.contains(f))
+
+        setOfCliques += clique  
+        
+        listRemovedNodes += maxCardinalityNode.value
+
+          
+      }
+      //filter out subsets
+      setOfCliques.filter(f => setOfCliques.forall(p => !f.subsetOf(p) || p == f))
+    }
+
+    maxCardinalityList()
+
+    
+        
+    
+    }
+    
+    
 
 }
   
