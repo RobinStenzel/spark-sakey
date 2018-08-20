@@ -21,10 +21,13 @@ import scala.collection.Set
 import shapeless.LowPriority.For
 import scala.collection.immutable.HashSet
 
+import scala.util.control.Breaks._
 
 
 object Sakey extends App{
   
+
+  val THIS_IS_VALUE_OF_N = 3
   //changes triples into (property, set of sets of subjects)
   def getFinalMap (triples: RDD[Triple]): (RDD[(Node, mutable.HashSet[mutable.HashSet[Node]])], Array[Node]) = {
 
@@ -90,7 +93,8 @@ object Sakey extends App{
   
 
   var t0 = System.nanoTime()
-  val finalMap = getFinalMap(triples)._1
+  val finalMapTuple = getFinalMap(triples)
+  val finalMap = finalMapTuple._1
   var t1 = System.nanoTime()
   println("Elapsed time: " + (t1 - t0)/1000000000 + "s cp1: FinalMap")
   
@@ -104,7 +108,7 @@ object Sakey extends App{
   //Create all combinations of (property, set of subjects, property2, set2 of subjects)
   //remove every combination with intersections set lower than n
   val filteredQuadruple = flatMap.cartesian(flatMap)
-  .filter(f => f._1._1 != f._2._1 && f._1._2.intersect(f._2._2).size >= 2 && f._1._1.hashCode() < f._2._1.hashCode())
+  .filter(f => f._1._1 != f._2._1 && f._1._2.intersect(f._2._2).size > THIS_IS_VALUE_OF_N && f._1._1.hashCode() < f._2._1.hashCode())
   
   t1 = System.nanoTime()
   println("Elapsed time: " + (t1 - t0)/1000000000 + "s cp2: flattenedMap")
@@ -118,8 +122,6 @@ object Sakey extends App{
   
   val mapVertexidToValue = mutable.HashMap.empty[VertexId, Node]
   graph.vertices.foreach(f => mapVertexidToValue.+=(f._1 -> f._2))
-  println("map")
-  println(mapVertexidToValue)
 
 
   //collect all properties that don't appear in any edge and put them in the list of non keys
@@ -166,19 +168,39 @@ object Sakey extends App{
         getMaxCliques(nodes, edges)
       })
   
-  graphCC.collect().foreach(println)
+  graphCC.take(50).foreach(println)
   
     t1 = System.nanoTime()
   println("Elapsed time: " + (t1 - t0)/1000000000 + "s cp6: MaxCliques")
   
   t0 = System.nanoTime()
   val nonKeysRDD = graphCC.map(f =>{
-        getNonKeys(f._1, 1, f._2)
+        getNonKeys(f._1, THIS_IS_VALUE_OF_N, f._2)
       })
-  nonKeysRDD.take(50).foreach(println)
+  
+  val emptyNonKeys = mutable.HashSet.empty[mutable.HashSet[Node]]
+  val nonKeysSeqOp = (s: mutable.HashSet[mutable.HashSet[Node]], v: mutable.HashSet[mutable.HashSet[Node]]) => s ++= v
+  val nonKeysCombOp = (p1: mutable.HashSet[mutable.HashSet[Node]], p2: mutable.HashSet[mutable.HashSet[Node]])=> p1 ++= p2
+  val aggregatedNonKeys = nonKeysRDD.treeAggregate(emptyNonKeys)(nonKeysSeqOp, nonKeysCombOp)
+  
+  //combine nNonKeys with the ones found in PNK creation
+  isolatedNNonKeys.foreach(f => aggregatedNonKeys += mutable.HashSet(f))
+  aggregatedNonKeys.take(50).foreach(println)
   
   t1 = System.nanoTime()
-  println("Elapsed time: " + (t1 - t0)/1000000000 + "s cp7: NonKeyFinder")  
+  println("Elapsed time: " + (t1 - t0)/1000000000 + "s cp7: NonKeyFinder") 
+  
+  t0 = System.nanoTime()  
+  val complement = getComplement(aggregatedNonKeys)
+  
+  //combine almostKEys with the ones found in finalMap creation
+  val almostKeys = keyDerivation(complement) 
+  finalMapTuple._2.foreach(f => almostKeys += mutable.HashSet(f))
+  println(almostKeys)
+  t1 = System.nanoTime()
+  println("Elapsed time: " + (t1 - t0)/1000000000 + "s cp8: AlmostKeys")
+  
+ 
   //uses minFill to create a chordal graph and maxCardinanilityOrdering to extract cliques
   //returns one pair of (set of cliques, distinct nodes) per connected component 
   def getMaxCliques (nodes: mutable.HashSet[VertexId], edges: mutable.HashSet[GraphEdge.UnDiEdge[VertexId]]) :  (mutable.HashSet[mutable.HashSet[Node]], mutable.HashSet[Node]) = {
@@ -278,16 +300,11 @@ object Sakey extends App{
     val listProperties = mutable.ArrayBuffer[Node]()
     val listSubjects = mutable.HashSet.empty[Node]
     val filteredMap = finalMap.filter(f => nodeSet.contains(f._1))
-    filteredMap.toLocalIterator.foreach(f => {
-      if(nodeSet.contains(f._1)){
+    filteredMap.collect().foreach(f => {
         finalMapDict += f._1 -> f._2
         listProperties += f._1
         listSubjects ++= f._2.flatten
-        
-      }
-
     })
-
 
     val initCurInter = listSubjects
     val initCurNKey = mutable.HashSet.empty[Node]
@@ -364,6 +381,100 @@ object Sakey extends App{
       nNonKeyFinder(properties(i+1), curInter, curNKey, seenInter, nonKeySet, properties, accessfinalMap, PNK, n, i+1)
     }
   }
+
+  
+  
+  
+  //HELP FUNCTIONS
+  
+  //returns complement set
+  def getComplement(inputSet :  mutable.HashSet[mutable.HashSet[Node]]) : mutable.HashSet[mutable.HashSet[Node]] = {
+    val flatSet = inputSet.flatten
+    val complement = mutable.HashSet.empty[mutable.HashSet[Node]]
+    inputSet.foreach(f => complement += flatSet.--(f))
+    return complement
+  }
+  
+  //returns list of properties from the compSet in descending order
+  def getOrderedProperties(compSet :  mutable.HashSet[mutable.HashSet[Node]]) : Seq[Node] = {
+    val mapOrderedProperties = mutable.HashMap.empty[Node,Int].withDefaultValue(0)
+    compSet.foreach(f => f.foreach(i => mapOrderedProperties(i) += 1))
+    val sortedSequence = mapOrderedProperties.toSeq.sortWith(_._2 > _._2)
+    sortedSequence.map(_._1)
+    
+  }
+  
+  //selects Sets which dont include pi
+  def selecSets(pi: Node, compSet:  mutable.HashSet[mutable.HashSet[Node]]) : mutable.HashSet[mutable.HashSet[Node]] = {
+    val test = mutable.HashSet.empty[mutable.HashSet[Node]]
+    compSet.foreach(f => test += f)
+    return test.filter(p => !p.contains(pi))
+
+  }
+  
+  
+
+
+  
+  //val compSet1 = mutable.HashSet(mutable.HashSet(1,2,4),mutable.HashSet(1,3,4),mutable.HashSet(3,5),mutable.HashSet(4,5))
+  
+  //returns n-almostKeys for given set of (n+1)-nonKeys
+  def keyDerivation(compSet:  mutable.HashSet[mutable.HashSet[Node]]) : mutable.HashSet[mutable.HashSet[Node]] = {
+
+    val keySet = mutable.HashSet.empty[mutable.HashSet[Node]]
+    val orderedProperties = getOrderedProperties(compSet)
+    var i = 0
+    var flag = false
+    while(i < orderedProperties.size && !flag){
+        val p = orderedProperties(i)
+        val selectedCompSets = selecSets(p, compSet) 
+        
+        if(selectedCompSets.isEmpty){
+          keySet += mutable.HashSet(p)
+        }
+        else{
+          //use deepCopy to prevent recursion from changing arguments
+          val result = keyDerivation(deepCopyHashSetOfHashSets(selectedCompSets))
+          result.foreach(g => {
+            val piSet = mutable.HashSet(p)
+            piSet ++= g
+            keySet += piSet
+          })
+        }
+
+        compSet.foreach(f => f -= p)
+        
+        //break if one set is empty
+        if(!compSet.forall(p => p.nonEmpty)){
+          flag = true
+        }
+        i += 1
+      
+      
+    }
+    return keySet
+  }
+  
+  def deepCopyHashSetOfHashSets(original : mutable.HashSet[mutable.HashSet[Node]]): mutable.HashSet[mutable.HashSet[Node]] = {
+    val deepCopy = mutable.HashSet.empty[mutable.HashSet[Node]]
+    original.foreach(f => {
+      val innerSet = mutable.HashSet.empty[Node]
+      f.foreach(g => {
+        innerSet += g
+      })
+      deepCopy += innerSet
+    })
+    deepCopy
+  }
+
+
+ 
+    
+
+
+  
+  
+  
 }
   
   
