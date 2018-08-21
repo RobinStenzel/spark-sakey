@@ -21,7 +21,10 @@ import scala.collection.Set
 import shapeless.LowPriority.For
 import scala.collection.immutable.HashSet
 
-import scala.util.control.Breaks._
+import org.apache.spark.storage.StorageLevel._
+
+import java.io._
+
 
 
 object Sakey extends App{
@@ -75,19 +78,31 @@ object Sakey extends App{
   .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
   .getOrCreate()
   
+  val pw = new PrintWriter(new File("times.txt" ))
+  val pw2 = new PrintWriter(new File("almostKeys.txt" ))
+  pw2.write(f"$THIS_IS_VALUE_OF_N%d-NonKeys")
+  pw2.write(THIS_IS_VALUE_OF_N.toString())
+  var tStart = System.nanoTime()
+  
   //Sansa read in triples
-  /*
-  val input = "src/main/resources/page_links_simple.nt"
+  
+ 
+  val input = "src/main/resources/OAEI_2011_Restaurant_1.nt"
   val lang = Lang.NTRIPLES
   val triples = spark.rdf(lang)(input)
-  triples.collect().foreach(println)
-  */
   
+  
+  /*
   val input = "src/main/resources/rdf.nt"
   val lang = Lang.RDFXML
   val triples = spark.rdf(lang)(input)
+  */
   
-
+  
+  val setProperties = mutable.HashSet.empty[Node]
+  val properties = triples.collect().foreach(f => setProperties += f.getPredicate)
+  println(setProperties)
+  
   triples.cache()
 
   
@@ -101,6 +116,10 @@ object Sakey extends App{
   
   t0 = System.nanoTime()
   //flatten Set of Sets to one single Set
+  
+  triples.unpersist(true)
+  
+  
   val flatMap = finalMap.flatMapValues(identity).reduceByKey((x,y) => x.++(y))
   
 
@@ -108,8 +127,9 @@ object Sakey extends App{
   //Create all combinations of (property, set of subjects, property2, set2 of subjects)
   //remove every combination with intersections set lower than n
   val filteredQuadruple = flatMap.cartesian(flatMap)
-  .filter(f => f._1._1 != f._2._1 && f._1._2.intersect(f._2._2).size > THIS_IS_VALUE_OF_N && f._1._1.hashCode() < f._2._1.hashCode())
+  .filter(f => f._1._1 != f._2._1 && f._1._2.intersect(f._2._2).size >= THIS_IS_VALUE_OF_N && f._1._1.hashCode() <= f._2._1.hashCode())
   
+  filteredQuadruple.take(50).foreach(println)
   t1 = System.nanoTime()
   println("Elapsed time: " + (t1 - t0)/1000000000 + "s cp2: flattenedMap")
 
@@ -118,14 +138,15 @@ object Sakey extends App{
   //create Graph out of quadruple
   val edges = filteredQuadruple.map { s => (s._1._1, s._1._1, s._2._1)}
   val tripleRDD = edges.map(f => Triple.create(f._1, f._2, f._3))  
+  
+  tripleRDD.persist(MEMORY_AND_DISK)
   val graph = tripleRDD.asGraph()
   
+  //create Map which stores vertexId to value for each vertex
   val mapVertexidToValue = mutable.HashMap.empty[VertexId, Node]
   graph.vertices.foreach(f => mapVertexidToValue.+=(f._1 -> f._2))
 
 
-  //collect all properties that don't appear in any edge and put them in the list of non keys
-  val isolatedNNonKeys= finalMap.keys.distinct().subtract(graph.vertices.values).collect()
   t1 = System.nanoTime()
   println("Elapsed time: " + (t1 - t0)/1000000000 + "s cp3: GraphX Graph")
 
@@ -137,6 +158,7 @@ object Sakey extends App{
   val mappedCC = connectedComponents.triplets.map(_.toTuple).map{ case ((v1,v2), (v3,v4), n1) => (v2, UnDiEdge(v1,v3))}
   t1 = System.nanoTime()
   println("Elapsed time: " + (t1 - t0)/1000000000 + "s cp4: ConnecteComponents")  
+  pw.write("Elapsed time: " + (t1 - t0)/1000000000 + "s cp4: ConnecteComponents")
 
   t0 = System.nanoTime()
   //aggregate edges of the same connected component
@@ -167,10 +189,12 @@ object Sakey extends App{
         val edges = f._2._1
         getMaxCliques(nodes, edges)
       })
-  
+      
   graphCC.take(50).foreach(println)
   
-    t1 = System.nanoTime()
+
+  
+  t1 = System.nanoTime()
   println("Elapsed time: " + (t1 - t0)/1000000000 + "s cp6: MaxCliques")
   
   t0 = System.nanoTime()
@@ -178,20 +202,24 @@ object Sakey extends App{
         getNonKeys(f._1, THIS_IS_VALUE_OF_N, f._2)
       })
   
+  //aggregate all nonkeys from different CCs
   val emptyNonKeys = mutable.HashSet.empty[mutable.HashSet[Node]]
   val nonKeysSeqOp = (s: mutable.HashSet[mutable.HashSet[Node]], v: mutable.HashSet[mutable.HashSet[Node]]) => s ++= v
   val nonKeysCombOp = (p1: mutable.HashSet[mutable.HashSet[Node]], p2: mutable.HashSet[mutable.HashSet[Node]])=> p1 ++= p2
   val aggregatedNonKeys = nonKeysRDD.treeAggregate(emptyNonKeys)(nonKeysSeqOp, nonKeysCombOp)
   
-  //combine nNonKeys with the ones found in PNK creation
-  isolatedNNonKeys.foreach(f => aggregatedNonKeys += mutable.HashSet(f))
-  aggregatedNonKeys.take(50).foreach(println)
+  
+  println(aggregatedNonKeys)
+  pw2.write(aggregatedNonKeys.toString())
+  pw2.write('\n')
+  pw2.write("almostKeys")
   
   t1 = System.nanoTime()
   println("Elapsed time: " + (t1 - t0)/1000000000 + "s cp7: NonKeyFinder") 
   
   t0 = System.nanoTime()  
   val complement = getComplement(aggregatedNonKeys)
+
   
   //combine almostKEys with the ones found in finalMap creation
   val almostKeys = keyDerivation(complement) 
@@ -199,6 +227,7 @@ object Sakey extends App{
   println(almostKeys)
   t1 = System.nanoTime()
   println("Elapsed time: " + (t1 - t0)/1000000000 + "s cp8: AlmostKeys")
+  pw2.write(almostKeys.toString())
   
  
   //uses minFill to create a chordal graph and maxCardinanilityOrdering to extract cliques
@@ -310,6 +339,7 @@ object Sakey extends App{
     val initCurNKey = mutable.HashSet.empty[Node]
     val initSeenInter = mutable.HashSet.empty[mutable.HashSet[Node]]
     val initNonKeySet = mutable.HashSet.empty[mutable.HashSet[Node]]
+    
 
     nNonKeyFinder(listProperties(0), initCurInter, initCurNKey, initSeenInter, initNonKeySet, listProperties, finalMapDict, PNK, n, 0)
     
@@ -330,7 +360,7 @@ object Sakey extends App{
           result.+=(f)
         }
       })
-      
+
       return result
     
   }
@@ -347,8 +377,8 @@ object Sakey extends App{
       PNK: mutable.HashSet[mutable.HashSet[Node]],
       n : Int,
       i : Int) : Unit = {
-
     if(uncheckedNonKeys(curNKey + pi, nonKeySet, PNK).size > 0){
+      
       val piValue = accessfinalMap.get(pi).get
       var selectedExceptionSet = piValue
       piValue.foreach(f => {
@@ -356,17 +386,15 @@ object Sakey extends App{
             var selectedExceptionSet = mutable.HashSet(mutable.HashSet(f))
           } 
         })
-
         selectedExceptionSet.foreach(s => {
           val newInter = s.intersect(curInter)
-          if(newInter.size > 1){
+
+          if(newInter.size > 0){
             if(!seenInter.contains(newInter)){
               val nvNKey = curNKey + pi
-
-              if(newInter.size > n){
+              if(newInter.size >= n){
                 nonKeySet += nvNKey
               }
-              
               if(i+1 < properties.size){
                 nNonKeyFinder(properties(i+1), newInter, nvNKey, seenInter, nonKeySet, properties, accessfinalMap, PNK, n, i+1)
               }
@@ -389,10 +417,17 @@ object Sakey extends App{
   
   //returns complement set
   def getComplement(inputSet :  mutable.HashSet[mutable.HashSet[Node]]) : mutable.HashSet[mutable.HashSet[Node]] = {
-    val flatSet = inputSet.flatten
+    val flatSet = mutable.HashSet.empty[Node]
+    setProperties.foreach(s => flatSet += s)
     val complement = mutable.HashSet.empty[mutable.HashSet[Node]]
-    inputSet.foreach(f => complement += flatSet.--(f))
-    return complement
+    if(inputSet.size > 0){
+      inputSet.foreach(f => complement += flatSet.--(f))
+      return complement
+    }
+    else{
+      return mutable.HashSet(flatSet)
+    }
+    
   }
   
   //returns list of properties from the compSet in descending order
@@ -436,6 +471,7 @@ object Sakey extends App{
           //use deepCopy to prevent recursion from changing arguments
           val result = keyDerivation(deepCopyHashSetOfHashSets(selectedCompSets))
           result.foreach(g => {
+            
             val piSet = mutable.HashSet(p)
             piSet ++= g
             keySet += piSet
@@ -472,7 +508,12 @@ object Sakey extends App{
     
 
 
+  var tEnd = System.nanoTime()
+  println("Elapsed time: " + (tEnd - tStart)/1000000000 + "s FINISH: Complete Time")
   
+  pw.write("Elapsed time: " + (tEnd - tStart)/1000000000 + "s FINISH: Complete Time")
+  pw.close
+  pw2.close
   
   
 }

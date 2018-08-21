@@ -1,23 +1,23 @@
-<http://simple.dbpedia.org/resource/April> <http://dbpedia.org/ontology/wikiPageWikiLink> <http://simple.dbpedia.org/resource/Month> .
-<http://simple.dbpedia.org/resource/April> <http://dbpedia.org/ontology/wikiPageWikiLink> <http://simple.dbpedia.org/resource/Year> .
-<http://simple.dbpedia.org/resource/April> <http://dbpedia.org/ontology/wikiPageWikiLink> <http://simple.dbpedia.org/resource/Day> .
-<http://simple.dbpedia.org/resource/April> <http://dbpedia.org/ontology/wikiPageWikiLink> <http://simple.dbpedia.org/resource/Latin_language> .
-<http://simple.dbpedia.org/resource/April> <http://dbpedia.org/ontology/wikiPageWikiLink> <http://simple.dbpedia.org/resource/Plant> .
-<http://simple.dbpedia.org/resource/April> <http://dbpedia.org/ontology/wikiPageWikiLink> <http://simple.dbpedia.org/resource/July> .
-<http://simple.dbpedia.org/resource/April> <http://dbpedia.org/ontology/wikiPageWikiLink> <http://simple.dbpedia.org/resource/January> .
-<http://simple.dbpedia.org/resource/April> <http://dbpedia.org/ontology/wikiPageWikiLink> <http://simple.dbpedia.org/resource/Flower> .
-<http://simple.dbpedia.org/resource/April> <http://dbpedia.org/ontology/wikiPageWikiLink> <http://simple.dbpedia.org/resource/Sweet_Pea> .
-<http://simple.dbpedia.org/resource/April> <http://dbpedia.org/ontology/wikiPageWikiLink> <http://simple.dbpedia.org/resource/Birthday> .
-<http://simple.dbpedia.org/resource/April> <http://dbpedia.org/ontology/wikiPageWikiLink> <http://simple.dbpedia.org/resource/Diamond> .
-<http://simple.dbpedia.org/resource/April> <http://dbpedia.org/ontology/wikiPageWikiLink> <http://simple.dbpedia.org/resource/Poetry> .
-<http://simple.dbpedia.org/resource/April> <http://dbpedia.org/ontology/wikiPageWikiLink> <http://simple.dbpedia.org/resource/May> .
-<http://simple.dbpedia.org/resource/April> <http://dbpedia.org/ontology/wikiPageWikiLink> <http://simple.dbpedia.org/resource/April_Fools'_Day> .
-<http://simple.dbpedia.org/resource/April> <http://dbpedia.org/ontology/wikiPageWikiLink> <http://simple.dbpedia.org/resource/April_1> .
-<http://simple.dbpedia.org/resource/April> <http://dbpedia.org/ontology/wikiPageWikiLink> <http://simple.dbpedia.org/resource/Easter> .
-<http://simple.dbpedia.org/resource/April> <http://dbpedia.org/ontology/wikiPageWikiLink> <http://simple.dbpedia.org/resource/Week> .
-<http://simple.dbpedia.org/resource/April> <http://dbpedia.org/ontology/wikiPageWikiLink> <http://simple.dbpedia.org/resource/March_22> .
-<http://simple.dbpedia.org/resource/April> <http://dbpedia.org/ontology/wikiPageWikiLink> <http://simple.dbpedia.org/resource/April_25> .
-<http://simple.dbpedia.org/resource/April> <http://dbpedia.org/ontology/wikiPageWikiLink> <http://simple.dbpedia.org/resource/Australia> .
-<http://simple.dbpedia.org/resource/April> <http://dbpedia.org/ontology/wikiPageWikiLink> <http://simple.dbpedia.org/resource/New_Zealand> .
-<http://simple.dbpedia.org/resource/April> <http://dbpedia.org/ontology/wikiPageWikiLink> <http://simple.dbpedia.org/resource/ANZAC_Day> .
-<http://simple.dbpedia.org/resource/A> <http://dbpedia.org/ontology/wikiPageWikiLink> <http://simple.dbpedia.org/resource/Letter> .
+<http://simple.dbpedia.org/resource/April>	<http://dbpedia.org/ontology/wikiPageWikiLink>	<http://simple.dbpedia.org/resource/Month>.
+<http://simple.dbpedia.org/resource/April>	<http://dbpedia.org/ontology/wikiPageWikiLink>	<http://simple.dbpedia.org/resource/Year>.
+<http://simple.dbpedia.org/resource/April>	<http://dbpedia.org/ontology/wikiPageWikiLink>	<http://simple.dbpedia.org/resource/Day>.
+<http://simple.dbpedia.org/resource/April>	<http://dbpedia.org/ontology/wikiPageWikiLink>	<http://simple.dbpedia.org/resource/Latin_language>.
+<http://simple.dbpedia.org/resource/April>	<http://dbpedia.org/ontology/wikiPageWikiLink>	<http://simple.dbpedia.org/resource/Plant>.
+<http://simple.dbpedia.org/resource/April>	<http://dbpedia.org/ontology/wikiPageWikiLink>	<http://simple.dbpedia.org/resource/July>.
+<http://simple.dbpedia.org/resource/April>	<http://dbpedia.org/ontology/wikiPageWikiLink>	<http://simple.dbpedia.org/resource/January>.
+<http://simple.dbpedia.org/resource/April>	<http://dbpedia.org/ontology/wikiPageWikiLink>	<http://simple.dbpedia.org/resource/Flower>.
+<http://simple.dbpedia.org/resource/April>	<http://dbpedia.org/ontology/wikiPageWikiLink>	<http://simple.dbpedia.org/resource/Sweet_Pea>.
+<http://simple.dbpedia.org/resource/April>	<http://dbpedia.org/ontology/wikiPageWikiLink>	<http://simple.dbpedia.org/resource/Birthday>.
+<http://simple.dbpedia.org/resource/April>	<http://dbpedia.org/ontology/wikiPageWikiLink>	<http://simple.dbpedia.org/resource/Diamond>.
+<http://simple.dbpedia.org/resource/April>	<http://dbpedia.org/ontology/wikiPageWikiLink>	<http://simple.dbpedia.org/resource/Poetry>.
+<http://simple.dbpedia.org/resource/April>	<http://dbpedia.org/ontology/wikiPageWikiLink>	<http://simple.dbpedia.org/resource/May>.
+<http://simple.dbpedia.org/resource/April>	<http://dbpedia.org/ontology/wikiPageWikiLink>	<http://simple.dbpedia.org/resource/April_Fools'_Day>.
+<http://simple.dbpedia.org/resource/April>	<http://dbpedia.org/ontology/wikiPageWikiLink>	<http://simple.dbpedia.org/resource/April_1>.
+<http://simple.dbpedia.org/resource/April>	<http://dbpedia.org/ontology/wikiPageWikiLink>	<http://simple.dbpedia.org/resource/Easter>.
+<http://simple.dbpedia.org/resource/April>	<http://dbpedia.org/ontology/wikiPageWikiLink>	<http://simple.dbpedia.org/resource/Week>.
+<http://simple.dbpedia.org/resource/April>	<http://dbpedia.org/ontology/wikiPageWikiLink>	<http://simple.dbpedia.org/resource/March_22>.
+<http://simple.dbpedia.org/resource/April>	<http://dbpedia.org/ontology/wikiPageWikiLink>	<http://simple.dbpedia.org/resource/April_25>.
+<http://simple.dbpedia.org/resource/April>	<http://dbpedia.org/ontology/wikiPageWikiLink>	<http://simple.dbpedia.org/resource/Australia>.
+<http://simple.dbpedia.org/resource/April>	<http://dbpedia.org/ontology/wikiPageWikiLink>	<http://simple.dbpedia.org/resource/New_Zealand>.
+<http://simple.dbpedia.org/resource/April>	<http://dbpedia.org/ontology/wikiPageWikiLink>	<http://simple.dbpedia.org/resource/ANZAC_Day>.
+<http://simple.dbpedia.org/resource/A>	<http://dbpedia.org/ontology/wikiPageWikiLink>	<Adam Eva>.
