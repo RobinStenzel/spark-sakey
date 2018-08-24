@@ -14,7 +14,6 @@ import org.apache.spark.rdd.RDD
 import org.apache.jena.graph._
 import org.apache.spark.graphx.EdgeTriplet
 
-//import scalax.collection.Graph 
 import scalax.collection.mutable.Graph
 import scalax.collection.GraphPredef._, scalax.collection.GraphEdge._, scalax.collection._
 import scala.collection.Set
@@ -22,17 +21,169 @@ import shapeless.LowPriority.For
 import scala.collection.immutable.HashSet
 
 import org.apache.spark.storage.StorageLevel._
-
 import java.io._
 
 
 
 object Sakey extends App{
   
+  //Choose N to find N-nonKeys and (N-1)-almostKeys
+  val N = 2
+  val N_MINUS_ONE = N - 1
+  
+  //inputFile
+  val input = "src/main/resources/datasets/movie_dataset.nt"
+  
+  //Lang.RDFXML for movie dataset (for better readability)
+  //Lang.NTRIPLES otherwise
+  val lang = Lang.RDFXML
 
-  val THIS_IS_VALUE_OF_N = 3
-  //changes triples into (property, set of sets of subjects)
-  def getFinalMap (triples: RDD[Triple]): (RDD[(Node, mutable.HashSet[mutable.HashSet[Node]])], Array[Node]) = {
+  //create SparkSession
+  val spark = SparkSession.builder
+  .master("local[*]")
+  .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+  .getOrCreate()
+
+
+
+  val triples = spark.rdf(lang)(input)
+
+ 
+  //create a result file, storing nonKeys and almostKeys
+  val outputFile = new PrintWriter(new File("src/main/resources/results/result.txt" ))
+
+
+  //store all properties to compute complement later
+  val setProperties = mutable.HashSet.empty[Node]
+  val properties = triples.collect().foreach(f => setProperties += f.getPredicate)
+
+
+  //STEP1: Compute FinalMap
+  val finalMapTuple = getFinalMap(triples)
+  val finalMap = finalMapTuple._1
+   
+  println("cp1: FinalMap")
+  finalMap.take(5).foreach(println)
+  
+
+
+
+  //STEP2: Create graph and compute connected components
+  val flatMap = finalMap.flatMapValues(identity).reduceByKey((x,y) => x.++(y))
+  
+  //Create all combinations of (property, set of subjects, property2, set2 of subjects)
+  //remove every combination with intersections set lower than n
+  val filteredQuadruple = flatMap.cartesian(flatMap)
+  .filter(f => f._1._2.intersect(f._2._2).size >= N && f._1._1.hashCode() <= f._2._1.hashCode())
+  
+
+  println("cp2: flattenedMap")
+
+
+
+
+  //create graph with GraphX out of quadruple
+  val edges = filteredQuadruple.map { s => (s._1._1, s._1._1, s._2._1)}
+  val tripleRDD = edges.map(f => Triple.create(f._1, f._2, f._3))  
+
+
+  tripleRDD.persist(MEMORY_AND_DISK)
+  val graph = tripleRDD.asGraph()
+  
+  //create Map with keys (VertexId, Node) for later use
+  val mapVertexidToValue = mutable.HashMap.empty[VertexId, Node]
+  graph.vertices.foreach(f => mapVertexidToValue.+=(f._1 -> f._2))
+
+  println("cp3: GraphX Graph")
+
+  //calculate connectedComponents with GraphX
+  val connectedComponents = graph.connectedComponents()
+  val mappedCC = connectedComponents.triplets.map(_.toTuple).map{ case ((v1,v2), (v3,v4), n1) => (v2, UnDiEdge(v1,v3))}
+
+  println("cp4: ConnectedComponents")  
+
+
+
+  //aggregate edges of the same connected component
+  val edgeSet = mutable.HashSet.empty[UnDiEdge[VertexId]]
+  val edgeSeqOp = (s: mutable.HashSet[UnDiEdge[VertexId]], v: UnDiEdge[VertexId]) => s += v
+  val edgeCombOp = (p1: mutable.HashSet[UnDiEdge[VertexId]], p2: mutable.HashSet[UnDiEdge[VertexId]])=> p1 ++= p2
+
+  //aggregate vertices of the same connected component
+  val vertexSet = mutable.HashSet.empty[VertexId]
+  val vertexSeq = (s: mutable.HashSet[VertexId], v: VertexId) => s += v
+  val vertexCombOp = (p1: mutable.HashSet[VertexId], p2: mutable.HashSet[VertexId])=> p1 ++= p2
+  
+  //swap vertexId with assigned CC and do the aggregation
+  val vert = connectedComponents.vertices.map({case (v1,v2) => (v2,v1)}).aggregateByKey(vertexSet)(vertexSeq, vertexCombOp)
+  
+  //join Edges and vertices with the same CC
+  val joinedCC = mappedCC.aggregateByKey(edgeSet)(edgeSeqOp, edgeCombOp).join(vert)
+  
+  println("cp5: Scalax Graph")
+
+
+  //create scalax graph out of edge and vertex set (better suited for removing and adding edges)
+  val graphCC = joinedCC.map(f 
+      =>{
+        val nodes = f._2._2
+        val edges = f._2._1
+        getMaxCliques(nodes, edges)
+      })
+      
+    
+      
+  println("cp6: MaxCliques")
+  graphCC.take(50).foreach(f => println(f._1))
+  
+
+  //STEP3: compute maxCliques with greedy algorithm
+
+
+  
+  //STEP4: compute n-nonKeys
+
+  val nonKeysRDD = graphCC.map(f =>{
+        getNonKeys(f._1, N, f._2)
+      })
+  
+  //aggregate all nonkeys from different CCs
+  val emptyNonKeys = mutable.HashSet.empty[mutable.HashSet[Node]]
+  val nonKeysSeqOp = (s: mutable.HashSet[mutable.HashSet[Node]], v: mutable.HashSet[mutable.HashSet[Node]]) => s ++= v
+  val nonKeysCombOp = (p1: mutable.HashSet[mutable.HashSet[Node]], p2: mutable.HashSet[mutable.HashSet[Node]])=> p1 ++= p2
+  val aggregatedNonKeys = nonKeysRDD.treeAggregate(emptyNonKeys)(nonKeysSeqOp, nonKeysCombOp)
+  
+  println("cp7: NonKeyFinder") 
+  println(aggregatedNonKeys)
+  
+  outputFile.write(f"$N%d-nonKeys: \n")
+  outputFile.write(aggregatedNonKeys.toString()+ "\n\n")
+  outputFile.write(f"$N_MINUS_ONE%d-almostKeys: \n")
+  
+
+  
+  //STEP5: Derive (n-1)-almostKeys  
+  val complement = getComplement(aggregatedNonKeys)
+  
+
+  //combine almostKeys with the ones found in finalMap creation
+  val almostKeys = keyDerivation(complement) 
+  finalMapTuple._2.collect().foreach(f => almostKeys += mutable.HashSet(f))
+  
+  println("cp8: AlmostKeys")
+  println(almostKeys)
+  outputFile.write(almostKeys.toString())
+  outputFile.close
+  
+  
+  
+  
+  //FUNCTIONS (getFinalMap, getMaxCliques, getNonKeys, keyDerivation + help functions)
+  
+  
+  
+  //computes Final map of form (property, set of sets of subjects)
+  def getFinalMap (triples: RDD[Triple]): (RDD[(Node, mutable.HashSet[mutable.HashSet[Node]])], RDD[Node]) = {
 
     val predObjMapping = triples.map { s => ((s.getPredicate, s.getObject), s.getSubject )}
     val initialSet = mutable.HashSet.empty[Node]
@@ -53,189 +204,32 @@ object Sakey extends App{
       if(v._2.size > 1 && !s.subsets().contains(v._2)) s.filter(!_.subsetOf(v._2)) += v._2 else s                    
     }
     
-    /*
-     * before appending sets, remove all subsets of elements of the opposite set
-     */
+    // before appending sets, remove all subsets of elements of the opposite set
     val mergePartitionSetsofSets = {(p1: mutable.HashSet[mutable.HashSet[Node]], p2: mutable.HashSet[mutable.HashSet[Node]]) =>
       p1.filter(p1 => p2.forall(x => !p1.subsetOf(x))) ++= p2.filter(p2 => p1.forall(x => !p2.subsetOf(x)))
     }      
 
     val predAggregation = predMapping.aggregateByKey(initialSetofSets)(addToSetofSets, mergePartitionSetsofSets)
     
+
+    
+    //Array of properties with empty sets
+    //val almostKeys = predMapping.keys.distinct().subtract(finalMap.keys).collect()
+    val almostKeys = predAggregation.filter(_._2.isEmpty).map(f=> f._1)
+    
+    
     //remove empty sets 
     val finalMap = predAggregation.filter(!_._2.isEmpty) 
     
-    //Array of properties with empty sets
-    val almostKeys = predMapping.keys.distinct().subtract(finalMap.keys).collect()
 
     return ( finalMap, almostKeys)
   
   }
-  
-  
-  val spark = SparkSession.builder
-  .master("local[*]")
-  .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-  .getOrCreate()
-  
-  val pw = new PrintWriter(new File("times.txt" ))
-  val pw2 = new PrintWriter(new File("almostKeys.txt" ))
-  pw2.write(f"$THIS_IS_VALUE_OF_N%d-NonKeys")
-  pw2.write(THIS_IS_VALUE_OF_N.toString())
-  var tStart = System.nanoTime()
-  
-  //Sansa read in triples
-  
  
-  val input = "src/main/resources/OAEI_2011_Restaurant_1.nt"
-  val lang = Lang.NTRIPLES
-  val triples = spark.rdf(lang)(input)
-  
-  
-  /*
-  val input = "src/main/resources/rdf.nt"
-  val lang = Lang.RDFXML
-  val triples = spark.rdf(lang)(input)
-  */
-  
-  
-  val setProperties = mutable.HashSet.empty[Node]
-  val properties = triples.collect().foreach(f => setProperties += f.getPredicate)
-  println(setProperties)
-  
-  triples.cache()
-
-  
-
-  var t0 = System.nanoTime()
-  val finalMapTuple = getFinalMap(triples)
-  val finalMap = finalMapTuple._1
-  var t1 = System.nanoTime()
-  println("Elapsed time: " + (t1 - t0)/1000000000 + "s cp1: FinalMap")
-  
-  
-  t0 = System.nanoTime()
-  //flatten Set of Sets to one single Set
-  
-  triples.unpersist(true)
-  
-  
-  val flatMap = finalMap.flatMapValues(identity).reduceByKey((x,y) => x.++(y))
-  
-
-  
-  //Create all combinations of (property, set of subjects, property2, set2 of subjects)
-  //remove every combination with intersections set lower than n
-  val filteredQuadruple = flatMap.cartesian(flatMap)
-  .filter(f => f._1._1 != f._2._1 && f._1._2.intersect(f._2._2).size >= THIS_IS_VALUE_OF_N && f._1._1.hashCode() <= f._2._1.hashCode())
-  
-  filteredQuadruple.take(50).foreach(println)
-  t1 = System.nanoTime()
-  println("Elapsed time: " + (t1 - t0)/1000000000 + "s cp2: flattenedMap")
-
-
-  t0 = System.nanoTime()
-  //create Graph out of quadruple
-  val edges = filteredQuadruple.map { s => (s._1._1, s._1._1, s._2._1)}
-  val tripleRDD = edges.map(f => Triple.create(f._1, f._2, f._3))  
-  
-  tripleRDD.persist(MEMORY_AND_DISK)
-  val graph = tripleRDD.asGraph()
-  
-  //create Map which stores vertexId to value for each vertex
-  val mapVertexidToValue = mutable.HashMap.empty[VertexId, Node]
-  graph.vertices.foreach(f => mapVertexidToValue.+=(f._1 -> f._2))
-
-
-  t1 = System.nanoTime()
-  println("Elapsed time: " + (t1 - t0)/1000000000 + "s cp3: GraphX Graph")
-
-  
-
-  t0 = System.nanoTime()
-  //calculate CCs with GraphX
-  val connectedComponents = graph.connectedComponents()
-  val mappedCC = connectedComponents.triplets.map(_.toTuple).map{ case ((v1,v2), (v3,v4), n1) => (v2, UnDiEdge(v1,v3))}
-  t1 = System.nanoTime()
-  println("Elapsed time: " + (t1 - t0)/1000000000 + "s cp4: ConnecteComponents")  
-  pw.write("Elapsed time: " + (t1 - t0)/1000000000 + "s cp4: ConnecteComponents")
-
-  t0 = System.nanoTime()
-  //aggregate edges of the same connected component
-  val edgeSet = mutable.HashSet.empty[UnDiEdge[VertexId]]
-  val edgeSeqOp = (s: mutable.HashSet[UnDiEdge[VertexId]], v: UnDiEdge[VertexId]) => s += v
-  val edgeCombOp = (p1: mutable.HashSet[UnDiEdge[VertexId]], p2: mutable.HashSet[UnDiEdge[VertexId]])=> p1 ++= p2
-
-  //aggregate vertices of the same connected component
-  val vertexSet = mutable.HashSet.empty[VertexId]
-  val vertexSeq = (s: mutable.HashSet[VertexId], v: VertexId) => s += v
-  val vertexCombOp = (p1: mutable.HashSet[VertexId], p2: mutable.HashSet[VertexId])=> p1 ++= p2
-  
-  //swap vertexId with assigned CC and do the aggregation
-  val vert = connectedComponents.vertices.map({case (v1,v2) => (v2,v1)}).aggregateByKey(vertexSet)(vertexSeq, vertexCombOp)
-  
-  //join Edges and vertices with the same CC
-  val joinedCC = mappedCC.aggregateByKey(edgeSet)(edgeSeqOp, edgeCombOp).join(vert)
-  joinedCC.take(100).foreach(println)
-  
-  t1 = System.nanoTime()
-  println("Elapsed time: " + (t1 - t0)/1000000000 + "s cp5: Scalax Graph")
-  
-  t0 = System.nanoTime()
-  //create scalax graph out of edge and vertex set (better suited for removing and adding edges)
-  val graphCC = joinedCC.map(f 
-      =>{
-        val nodes = f._2._2
-        val edges = f._2._1
-        getMaxCliques(nodes, edges)
-      })
-      
-  graphCC.take(50).foreach(println)
-  
-
-  
-  t1 = System.nanoTime()
-  println("Elapsed time: " + (t1 - t0)/1000000000 + "s cp6: MaxCliques")
-  
-  t0 = System.nanoTime()
-  val nonKeysRDD = graphCC.map(f =>{
-        getNonKeys(f._1, THIS_IS_VALUE_OF_N, f._2)
-      })
-  
-  //aggregate all nonkeys from different CCs
-  val emptyNonKeys = mutable.HashSet.empty[mutable.HashSet[Node]]
-  val nonKeysSeqOp = (s: mutable.HashSet[mutable.HashSet[Node]], v: mutable.HashSet[mutable.HashSet[Node]]) => s ++= v
-  val nonKeysCombOp = (p1: mutable.HashSet[mutable.HashSet[Node]], p2: mutable.HashSet[mutable.HashSet[Node]])=> p1 ++= p2
-  val aggregatedNonKeys = nonKeysRDD.treeAggregate(emptyNonKeys)(nonKeysSeqOp, nonKeysCombOp)
-  
-  
-  println(aggregatedNonKeys)
-  pw2.write(aggregatedNonKeys.toString())
-  pw2.write('\n')
-  pw2.write("almostKeys")
-  
-  t1 = System.nanoTime()
-  println("Elapsed time: " + (t1 - t0)/1000000000 + "s cp7: NonKeyFinder") 
-  
-  t0 = System.nanoTime()  
-  val complement = getComplement(aggregatedNonKeys)
-
-  
-  //combine almostKEys with the ones found in finalMap creation
-  val almostKeys = keyDerivation(complement) 
-  finalMapTuple._2.foreach(f => almostKeys += mutable.HashSet(f))
-  println(almostKeys)
-  t1 = System.nanoTime()
-  println("Elapsed time: " + (t1 - t0)/1000000000 + "s cp8: AlmostKeys")
-  pw2.write(almostKeys.toString())
-  
- 
+  //returns all MaxCliques per connected component 
   //uses minFill to create a chordal graph and maxCardinanilityOrdering to extract cliques
-  //returns one pair of (set of cliques, distinct nodes) per connected component 
   def getMaxCliques (nodes: mutable.HashSet[VertexId], edges: mutable.HashSet[GraphEdge.UnDiEdge[VertexId]]) :  (mutable.HashSet[mutable.HashSet[Node]], mutable.HashSet[Node]) = {
     val g2 = Graph.from(nodes, edges)
-    
-    
     
     //returns min-fill: number of edges needed to be filled to fully connect the node's parents
     def getNodeFill (node: g2.NodeT) : Int = {
@@ -366,7 +360,7 @@ object Sakey extends App{
   }
   
   
-  //finds all n-Non-keys but not definitely all maximal
+  //finds all n-nonKeys
   def nNonKeyFinder (pi : Node,
       curInter : mutable.HashSet[Node],
       curNKey : mutable.HashSet[Node],
@@ -389,7 +383,7 @@ object Sakey extends App{
         selectedExceptionSet.foreach(s => {
           val newInter = s.intersect(curInter)
 
-          if(newInter.size > 0){
+          if(newInter.size > 1){
             if(!seenInter.contains(newInter)){
               val nvNKey = curNKey + pi
               if(newInter.size >= n){
@@ -411,9 +405,6 @@ object Sakey extends App{
   }
 
   
-  
-  
-  //HELP FUNCTIONS
   
   //returns complement set
   def getComplement(inputSet :  mutable.HashSet[mutable.HashSet[Node]]) : mutable.HashSet[mutable.HashSet[Node]] = {
@@ -447,13 +438,21 @@ object Sakey extends App{
 
   }
   
+  //makes a deepCopy of given Set of Sets
+  def deepCopyHashSetOfHashSets(original : mutable.HashSet[mutable.HashSet[Node]]): mutable.HashSet[mutable.HashSet[Node]] = {
+    val deepCopy = mutable.HashSet.empty[mutable.HashSet[Node]]
+    original.foreach(f => {
+      val innerSet = mutable.HashSet.empty[Node]
+      f.foreach(g => {
+        innerSet += g
+      })
+      deepCopy += innerSet
+    })
+    deepCopy
+  }
   
-
-
   
-  //val compSet1 = mutable.HashSet(mutable.HashSet(1,2,4),mutable.HashSet(1,3,4),mutable.HashSet(3,5),mutable.HashSet(4,5))
-  
-  //returns n-almostKeys for given set of (n+1)-nonKeys
+  //returns (n-1)-almostKeys for given set of n-nonKeys
   def keyDerivation(compSet:  mutable.HashSet[mutable.HashSet[Node]]) : mutable.HashSet[mutable.HashSet[Node]] = {
 
     val keySet = mutable.HashSet.empty[mutable.HashSet[Node]]
@@ -491,30 +490,7 @@ object Sakey extends App{
     return keySet
   }
   
-  def deepCopyHashSetOfHashSets(original : mutable.HashSet[mutable.HashSet[Node]]): mutable.HashSet[mutable.HashSet[Node]] = {
-    val deepCopy = mutable.HashSet.empty[mutable.HashSet[Node]]
-    original.foreach(f => {
-      val innerSet = mutable.HashSet.empty[Node]
-      f.foreach(g => {
-        innerSet += g
-      })
-      deepCopy += innerSet
-    })
-    deepCopy
-  }
 
-
- 
-    
-
-
-  var tEnd = System.nanoTime()
-  println("Elapsed time: " + (tEnd - tStart)/1000000000 + "s FINISH: Complete Time")
-  
-  pw.write("Elapsed time: " + (tEnd - tStart)/1000000000 + "s FINISH: Complete Time")
-  pw.close
-  pw2.close
-  
   
 }
   

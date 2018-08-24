@@ -1,0 +1,5 @@
+3-nonKeys: 
+Set(Set(director, actor))
+
+2-almostKeys: 
+Set(Set(language), Set(release), Set(name))
